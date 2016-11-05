@@ -82,7 +82,15 @@ MPU6050 mpu;
 #define AXIS_NUMBER 3
 
 #define LED_PIN 13 // (Arduino is 13, Teensy is 11, Teensy++ is 6)
+#define TUNE_PIN 0 //Analog pin for tuning pids by potentiometer
+#define SERVO_PIN 9 //Servo attached to
+
+#define LED_BLINK_INTERVAL_INITIALIZE  250;
+#define LED_BLINK_INTERVAL_LOOP  1000;
+
 bool blinkState = false;
+int ledBlinkInterval = 250;
+long ledSwitchTime;
 bool zeroInitialized = false;
 
 // MPU control/status vars
@@ -124,6 +132,8 @@ void dmpDataReady() {
 // ================================================================
 
 void setup() {
+    myservo.attach(SERVO_PIN); //Yaw servo is attached to pin #9
+    myservo.write(90);
     // join I2C bus (I2Cdev library doesn't do this automatically)
     #if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
         Wire.begin();
@@ -193,18 +203,17 @@ void setup() {
     pinMode(LED_PIN, OUTPUT);
 
     for (int i=0; i<AXIS_NUMBER; i++) {
-      ki[i] = 0.005;
-      kp[i] = 0.005;
-      kd[i] = 0.001;
+      ki[i] = 0.0086;
+      kp[i] = 0.0086;
+      kd[i] = 0.0086;
 
       errorSum[i] = 0;
       errorLast[i] = 0;
       zeroValue[i] = 0;
     }
 
-    myservo.attach(9); //Yaw servo is attached to pin #9
-
-    Serial.print("Please wait 20 seconds for setting zeros\t");
+    ledSwitchTime = millis();
+    Serial.println("Please wait 20 seconds for setting zeros\t");
     startTime = millis();
 }
 
@@ -232,14 +241,41 @@ double calcControlPID(double input, double setPoint, int axe) {
 double processAxis(String axisName, int axis) {
     double value = ypr[axis] * 180/M_PI;
     double controlValue = calcControlPID(value, zeroValue[axis], axis);
+
+    /*
     Serial.print(axisName);
     Serial.print("\t");
     Serial.print(zeroValue[axis] - value);
     Serial.print("\t");
     Serial.print(controlValue);
     Serial.println();
+    */
 
     return controlValue;
+}
+
+//Tuning PID values by potentiometer 
+void setUpPIDfromPotentiometer() {
+    int value = analogRead(TUNE_PIN);
+
+    for (int i=0; i<AXIS_NUMBER; i++) {
+        ki[i] = (double)value/10000;
+        kp[i] = (double)value/10000;
+        kd[i] = (double)value/10000;
+    }  
+}
+
+void printPIDs() {
+    Serial.print("PID: ");
+    for (int i=0; i<AXIS_NUMBER; i++) {
+        Serial.print(kp[i], 4);
+        Serial.print("\t");
+        Serial.print(ki[i], 4);
+        Serial.print("\t");
+        Serial.print(kd[i], 4);
+        Serial.print("\t");
+    }  
+    Serial.println("");
 }
 
 //Converts each control value to servo movement
@@ -312,6 +348,7 @@ void loop() {
         mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
 
         if (!zeroInitialized) {
+            ledBlinkInterval = LED_BLINK_INTERVAL_INITIALIZE;
 
             for (int i=0; i<AXIS_NUMBER; i++) {
                 zeroValue[i] = ypr[i] * 180/M_PI;
@@ -331,16 +368,23 @@ void loop() {
             }
 
         } else {
+            ledBlinkInterval = LED_BLINK_INTERVAL_LOOP;
+
+            //Uncomment this line to have Arduino PIDs configured with potentiometer
+            //setUpPIDfromPotentiometer();  
+          
             double controlValueYaw = processAxis("Yaw", 0);
             controlToServo(controlValueYaw);
-            
+
+            printPIDs();
 //            processAxe("Pitch", 1);
 //            processAxe("Roll", 2);
         }
-        
-        // blink LED to indicate activity
-        //TODO: improve this. More blinking types for each stage
-        blinkState = !blinkState;
+
+        if (millis() - ledSwitchTime >= ledBlinkInterval) {
+            blinkState = !blinkState;
+            ledSwitchTime = millis();
+        }
         digitalWrite(LED_PIN, blinkState);
     }
 }
