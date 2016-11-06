@@ -115,6 +115,12 @@ double zeroValue[AXIS_NUMBER];
 double errorSum[AXIS_NUMBER];
 double errorLast[AXIS_NUMBER];
 
+char inputControlChar;
+boolean inputControlCompleted = false;
+String inputControlLine = "";
+char inputControlPrefixChar;
+
+
 
 // ================================================================
 // ===               INTERRUPT DETECTION ROUTINE                ===
@@ -221,7 +227,9 @@ void setup() {
 // ===                        ROUTINES                          ===
 // ================================================================
 
-//Calculates control value based on PID algorithm
+/**
+ * Calculates control value based on PID algorithm
+ */
 double calcControlPID(double input, double setPoint, int axe) {
     unsigned long now = millis();
     double timeChange = (double)(now - startTime);
@@ -237,7 +245,9 @@ double calcControlPID(double input, double setPoint, int axe) {
     return res;
 }
 
-//Processes each axis, calculates required control valu and outputs to Monitor
+/**
+ * Processes each axis, calculates required control valu and outputs to Monitor
+ */
 double processAxis(String axisName, int axis) {
     double value = ypr[axis] * 180/M_PI;
     double controlValue = calcControlPID(value, zeroValue[axis], axis);
@@ -254,7 +264,9 @@ double processAxis(String axisName, int axis) {
     return controlValue;
 }
 
-//Tuning PID values by potentiometer 
+/**
+ * Tuning PID values by potentiometer at TUNE_PIN
+ */
 void setUpPIDfromPotentiometer() {
     int value = analogRead(TUNE_PIN);
 
@@ -265,6 +277,9 @@ void setUpPIDfromPotentiometer() {
     }  
 }
 
+/**
+ * Debug
+ */
 void printPIDs() {
     Serial.print("PID: ");
     for (int i=0; i<AXIS_NUMBER; i++) {
@@ -278,15 +293,59 @@ void printPIDs() {
     Serial.println("");
 }
 
-//Converts each control value to servo movement
+/**
+ * Also it is possible adjust PID values using Serial - put values like
+ * i100 or d150 or p120 by one at the time and then press Send
+ * Where first char is 'p' or 'i' or 'd'
+ * Following by number
+ */
+void setUpPIDfromSerial() {
+    while (Serial.available() > 0) {
+        inputControlChar = Serial.read();
+        if (inputControlChar == '\n') {
+            inputControlCompleted = true;
+            Serial.println(inputControlLine);  
+            Serial.println(inputControlPrefixChar);  
+        } else {
+            if (isDigit(inputControlChar)) {
+                inputControlLine += inputControlChar;
+            } else {
+                if (inputControlChar == 'p' || inputControlChar == 'i' || inputControlChar == 'd') {
+                    inputControlPrefixChar = inputControlChar;
+                }
+            }
+        }
+    }
+
+    if (inputControlCompleted) {
+        for (int i=0; i<AXIS_NUMBER; i++) {
+            if (inputControlPrefixChar == 'i') {
+                ki[i] = (double)inputControlLine.toInt()/10000;    
+            }
+
+            if (inputControlPrefixChar == 'p') {
+                kp[i] = (double)inputControlLine.toInt()/10000;    
+            }
+            
+            if (inputControlPrefixChar == 'd') {
+                kd[i] = (double)inputControlLine.toInt()/10000;    
+            }
+        }  
+
+        inputControlCompleted = false;
+        inputControlLine = "";
+        inputControlPrefixChar = 0;
+
+        printPIDs();
+    }
+}
+
+/**
+ * Converts each control value to servo movement
+ */
 void controlToServo(double value) {
-    double v = (-1)*value;
-    if (v < -90) {
-        v = -90;
-    }
-    if (v > 90) {
-        v = 90;
-    }
+    double v = constrain((-1)*value, -90, 90); //Should be between -90..90
+    
     int pos = map(v, -90, 90, 0, 180);
     myservo.write(pos);
 }
@@ -372,11 +431,12 @@ void loop() {
 
             //Uncomment this line to have Arduino PIDs configured with potentiometer
             //setUpPIDfromPotentiometer();  
+            setUpPIDfromSerial();
           
             double controlValueYaw = processAxis("Yaw", 0);
             controlToServo(controlValueYaw);
 
-            printPIDs();
+            //printPIDs();
 //            processAxe("Pitch", 1);
 //            processAxe("Roll", 2);
         }
